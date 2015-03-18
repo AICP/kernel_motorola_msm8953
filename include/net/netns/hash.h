@@ -3,8 +3,17 @@
 
 #include <net/net_namespace.h>
 
-static inline unsigned int net_hash_mix(struct net *net)
+static inline u32 net_hash_mix(const struct net *net)
 {
-	return net->hash_mix;
+#ifdef CONFIG_NET_NS
+	/*
+	 * shift this right to eliminate bits, that are
+	 * always zeroed
+	 */
+
+	return (u32)(((unsigned long)net) >> L1_CACHE_SHIFT);
+#else
+	return 0;
+#endif
 }
 #endif
