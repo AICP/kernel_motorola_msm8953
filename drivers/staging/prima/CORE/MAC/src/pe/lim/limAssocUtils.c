@@ -1095,6 +1095,13 @@ limRejectAssociation(tpAniSirGlobal pMac, tSirMacAddr peerAddr, tANI_U8 subType,
             vos_mem_free(psessionEntry->parsedAssocReq[pStaDs->assocId]);
             psessionEntry->parsedAssocReq[pStaDs->assocId] = NULL;
         }
+
+        if (pStaDs->mlmStaContext.mlmState == eLIM_MLM_WT_ADD_STA_RSP_STATE) {
+            /* Delete hash entry on add sta failure */
+            limReleasePeerIdx(pMac, pStaDs->assocId, psessionEntry);
+            limDeleteDphHashEntry(pMac, pStaDs->staAddr,
+                                  pStaDs->assocId,psessionEntry);
+        }
     }
     else
     {
@@ -4117,7 +4124,7 @@ tSirRetStatus limStaSendAddBssPreAssoc( tpAniSirGlobal pMac, tANI_U8 updateEntry
 
     if(pMac->lim.gLimProtectionControl != WNI_CFG_FORCE_POLICY_PROTECTION_DISABLE)
         limDecideStaProtectionOnAssoc(pMac, pBeaconStruct, psessionEntry);
-    vos_mem_copy(pAddBssParams->bssId, bssDescription->bssId,
+        vos_mem_copy(pAddBssParams->bssId, bssDescription->bssId,
                      sizeof(tSirMacAddr));
 
     // Fill in tAddBssParams selfMacAddr

@@ -63,6 +63,8 @@
 #define IEEE80211_CHAN_NO_80MHZ		1<<7
 #endif
 
+bool init_by_reg_core_user;
+
 #ifdef CONFIG_ENABLE_LINUX_REG
 
 static v_REGDOMAIN_t cur_reg_domain = REGDOMAIN_COUNT;
@@ -183,6 +185,53 @@ chan_to_ht_40_index_map chan_to_ht_40_index[NUM_20MHZ_RF_CHANNELS] =
   {RF_CHAN_BOND_159, RF_CHAN_BOND_163},    //RF_CHAN_161,
   {RF_CHAN_BOND_163, INVALID_RF_CHANNEL},  //RF_CHAN_165,
 };
+
+//BEGIN IKSWO-79967, add disable MHS Band1 country list
+typedef struct
+{
+    v_U16_t countryCount;
+    v_COUNTRYCODE_t countryCode[MAX_COUNTRY_COUNT];
+} DisableMhsBand1CountryTable_t;
+static DisableMhsBand1CountryTable_t disableMhsBand1CountryInfoTable =
+{
+    33,
+    {
+      {'A', 'T'},
+      {'B', 'E'},
+      {'B', 'G'},
+      {'C', 'H'},
+      {'C', 'Y'},
+      {'C', 'Z'},
+      {'D', 'E'},
+      {'D', 'K'},
+      {'E', 'E'},
+      {'E', 'L'},
+      {'E', 'S'},
+      {'F', 'I'},
+      {'F', 'R'},
+      {'H', 'R'},
+      {'H', 'U'},
+      {'I', 'E'},
+      {'I', 'S'},
+      {'I', 'T'},
+      {'L', 'I'},
+      {'L', 'T'},
+      {'L', 'U'},
+      {'L', 'V'},
+      {'M', 'T'},
+      {'N', 'L'},
+      {'N', 'O'},
+      {'P', 'L'},
+      {'P', 'T'},
+      {'R', 'O'},
+      {'S', 'E'},
+      {'S', 'I'},
+      {'S', 'K'},
+      {'T', 'R'},
+      {'U', 'K'},
+    }
+};
+//END IKSWO-79967
 
 static CountryInfoTable_t countryInfoTable =
 {
@@ -3827,7 +3876,12 @@ int vos_update_nv_table_from_wiphy_band(void *hdd_ctx,
         for (j = 0; j < wiphy->bands[i]->n_channels; j++)
         {
              if (HDD_NL80211_BAND_2GHZ == i && eCSR_BAND_5G == nBandCapability)
-                  wiphy->bands[i]->channels[j].flags |= IEEE80211_CHAN_DISABLED;
+             {
+                 if (WLAN_HDD_IS_SOCIAL_CHANNEL(wiphy->bands[i]->channels[j].center_freq) )
+                     wiphy->bands[i]->channels[j].flags &= ~IEEE80211_CHAN_DISABLED;
+                 else
+                     wiphy->bands[i]->channels[j].flags |= IEEE80211_CHAN_DISABLED;
+             }
              else if (HDD_NL80211_BAND_5GHZ == i && eCSR_BAND_24 == nBandCapability)
                   wiphy->bands[i]->channels[j].flags |= IEEE80211_CHAN_DISABLED;
 
@@ -4246,6 +4300,9 @@ int __wlan_hdd_linux_reg_notifier(struct wiphy *wiphy,
     VOS_TRACE(VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_INFO,
                "cfg80211 reg notifier callback for country for initiator %d", request->initiator);
 
+    pr_info("country: %c%c and initiator %d", request->alpha2[0],
+            request->alpha2[1], request->initiator);
+
     if (NULL == pHddCtx)
     {
        VOS_TRACE( VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
@@ -4386,6 +4443,9 @@ int __wlan_hdd_linux_reg_notifier(struct wiphy *wiphy,
         }
         else
         {
+           if (WLAN_HDD_IS_LOAD_IN_PROGRESS(pHddCtx))
+              init_by_reg_core_user = true;
+
            sme_GenericChangeCountryCode(pHddCtx->hHal, country_code,
                                     temp_reg_domain);
         }
@@ -4563,6 +4623,26 @@ void vos_getCurrentCountryCode( tANI_U8 *cc)
 {
     vos_mem_copy(cc, linux_reg_cc, 2);
 }
+
+//BEGIN IKSWO-79967, add function to check if current country need disable MHS 5G Band1
+/**------------------------------------------------------------------------
+  \brief vos_IsDisableB1Countrycode -
+  \param   countrycode
+  \return TRUE if country need disable MHS Band 1
+  \sa
+  -------------------------------------------------------------------------*/
+
+v_BOOL_t vos_IsDisableMhsBand1CountryCode(tANI_U8 *cc)
+{
+    int i;
+    for (i = 0; i < disableMhsBand1CountryInfoTable.countryCount; i++)
+    {
+        if (memcmp(cc, disableMhsBand1CountryInfoTable.countryCode[i], VOS_COUNTRY_CODE_LEN) == 0)
+            return VOS_TRUE;
+    }
+    return VOS_FALSE;
+}
+//END IKSWO-79967
 
 #else
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2018 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2019 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -498,7 +498,7 @@ void hdd_copy_ht_caps(struct ieee80211_ht_cap *hdd_ht_cap,
         hdd_ht_cap->mcs.rx_mask[i] =
             roam_ht_cap->supportedMCSSet[i];
 
-    hdd_ht_cap->mcs.rx_highest =
+        hdd_ht_cap->mcs.rx_highest =
             ((short) (roam_ht_cap->supportedMCSSet[11]) << 8) |
             ((short) (roam_ht_cap->supportedMCSSet[10]));
         hdd_ht_cap->mcs.tx_params =
@@ -547,7 +547,7 @@ void hdd_copy_vht_caps(struct ieee80211_vht_cap *hdd_vht_cap,
             hdd_vht_cap->vht_cap_info |=
                 temp_vht_cap <<
                 IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_160MHZ;
-    if (roam_vht_cap->supportedChannelWidthSet &
+        if (roam_vht_cap->supportedChannelWidthSet &
             (IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_160_80PLUS80MHZ >>
             VHT_CAP_SUPP_CHAN_WIDTH_MASK_SHIFT))
             hdd_vht_cap->vht_cap_info |=
@@ -897,10 +897,10 @@ static void hdd_SendFTAssocResponse(struct net_device *dev, hdd_adapter_t *pAdap
     unsigned int len = 0;
     u8 *pFTAssocRsp = NULL;
 
-    if (pCsrRoamInfo->nAssocRspLength == 0)
+    if (pCsrRoamInfo->nAssocRspLength < FT_ASSOC_RSP_IES_OFFSET)
     {
         hddLog(LOGE,
-            "%s: pCsrRoamInfo->nAssocRspLength=%d",
+            "%s: Invalid assoc rsp length %d",
             __func__, (int)pCsrRoamInfo->nAssocRspLength);
         return;
     }
@@ -919,6 +919,16 @@ static void hdd_SendFTAssocResponse(struct net_device *dev, hdd_adapter_t *pAdap
         (unsigned int)pFTAssocRsp[0],
         (unsigned int)pFTAssocRsp[1]);
 
+    /* Send the Assoc Resp, the supplicant needs this for initial Auth. */
+    len = pCsrRoamInfo->nAssocRspLength - FT_ASSOC_RSP_IES_OFFSET;
+    if (len > IW_GENERIC_IE_MAX) {
+        hddLog(LOGE,
+             "%s: Invalid assoc rsp length %d",
+             __func__, (int)pCsrRoamInfo->nAssocRspLength);
+        return;
+    }
+    wrqu.data.length = len;
+
     // We need to send the IEs to the supplicant.
     buff = kmalloc(IW_GENERIC_IE_MAX, GFP_ATOMIC);
     if (buff == NULL)
@@ -927,9 +937,6 @@ static void hdd_SendFTAssocResponse(struct net_device *dev, hdd_adapter_t *pAdap
         return;
     }
 
-    // Send the Assoc Resp, the supplicant needs this for initial Auth.
-    len = pCsrRoamInfo->nAssocRspLength - FT_ASSOC_RSP_IES_OFFSET;
-    wrqu.data.length = len;
     memset(buff, 0, IW_GENERIC_IE_MAX);
     memcpy(buff, pFTAssocRsp, len);
     wireless_send_event(dev, IWEVASSOCRESPIE, &wrqu, buff);
@@ -1249,6 +1256,13 @@ static void hdd_SendAssociationEvent(struct net_device *dev,tCsrRoamInfo *pCsrRo
     {
         VOS_TRACE( VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_ERROR,
                  "wlan: disconnected");
+        if (pHddCtx->btCoexModeSet) {
+            VOS_TRACE( VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO,
+                       FL("Wlan disconnected, sending DHCP stop indication"));
+            pHddCtx->btCoexModeSet = FALSE;
+            sme_DHCPStopInd(pHddCtx->hHal, pAdapter->device_mode,
+                            pAdapter->sessionId);
+        }
         type = WLAN_STA_DISASSOC_DONE_IND;
         memset(wrqu.ap_addr.sa_data,'\0',ETH_ALEN);
 
@@ -1872,7 +1886,7 @@ static eHalStatus hdd_DisConnectHandler( hdd_adapter_t *pAdapter, tCsrRoamInfo *
        /* clear scan cache for Link Lost */
        if (pRoamInfo && !pRoamInfo->reasonCode &&
            (eCSR_ROAM_LOSTLINK == roamStatus)) {
-           wlan_hdd_cfg80211_update_bss_list(pAdapter,
+           wlan_hdd_cfg80211_unlink_bss(pAdapter,
                                pHddStaCtx->conn_info.bssId);
            sme_remove_bssid_from_scan_list(pHddCtx->hHal,
                                pHddStaCtx->conn_info.bssId);
@@ -2169,8 +2183,10 @@ static void hdd_SendReAssocEvent(struct net_device *dev, hdd_adapter_t *pAdapter
         goto done;
     }
 
-    if (pCsrRoamInfo->nAssocRspLength == 0) {
-        hddLog(LOGE, "%s: Invalid assoc response length", __func__);
+    if (pCsrRoamInfo->nAssocRspLength < FT_ASSOC_RSP_IES_OFFSET) {
+
+        hddLog(LOGE, "%s: Invalid assoc response length %d",
+               __func__, pCsrRoamInfo->nAssocRspLength);
         goto done;
     }
 
@@ -2187,6 +2203,11 @@ static void hdd_SendReAssocEvent(struct net_device *dev, hdd_adapter_t *pAdapter
 
     // Send the Assoc Resp, the supplicant needs this for initial Auth.
     len = pCsrRoamInfo->nAssocRspLength - FT_ASSOC_RSP_IES_OFFSET;
+    if (len > IW_GENERIC_IE_MAX) {
+        hddLog(LOGE, "%s: Invalid assoc response length %d",
+                __func__, pCsrRoamInfo->nAssocRspLength);
+         goto done;
+    }
     rspRsnLength = len;
     memcpy(rspRsnIe, pFTAssocRsp, len);
     memset(rspRsnIe + len, 0, IW_GENERIC_IE_MAX - len);
@@ -2668,7 +2689,7 @@ static eHalStatus hdd_AssociationCompletionHandler( hdd_adapter_t *pAdapter, tCs
            ((eSIR_SME_JOIN_TIMEOUT_RESULT_CODE == pRoamInfo->statusCode) ||
            (eSIR_SME_AUTH_TIMEOUT_RESULT_CODE == pRoamInfo->statusCode) ||
            (eSIR_SME_ASSOC_TIMEOUT_RESULT_CODE == pRoamInfo->statusCode)))) {
-             wlan_hdd_cfg80211_update_bss_list(pAdapter,
+             wlan_hdd_cfg80211_unlink_bss(pAdapter,
                     pRoamInfo ? pRoamInfo->bssid : pWextState->req_bssId);
              sme_remove_bssid_from_scan_list(pHddCtx->hHal,
                     pRoamInfo ? pRoamInfo->bssid : pWextState->req_bssId);

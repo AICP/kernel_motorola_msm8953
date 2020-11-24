@@ -2967,10 +2967,11 @@ void lim_handle_ecsa_req(tpAniSirGlobal mac_ctx, struct ecsa_frame_params *ecsa_
    session->gLimChannelSwitch.secondarySubBand = PHY_SINGLE_CHANNEL_CENTERED;
    session->gLimWiderBWChannelSwitch.newChanWidth = 0;
 
-   ch_offset = limGetOffChMaxBwOffsetFromChannel(
-                       mac_ctx->scan.countryCodeCurrent,
-                       ecsa_req->new_channel,
-                       sta_ds->mlmStaContext.vhtCapability);
+   ch_offset =
+       lim_get_channel_width_from_opclass(mac_ctx->scan.countryCodeCurrent,
+                                          ecsa_req->new_channel,
+                                          sta_ds->mlmStaContext.vhtCapability,
+                                          ecsa_req->op_class);
    if (ch_offset == BW80) {
        session->gLimWiderBWChannelSwitch.newChanWidth =
                                   WNI_CFG_VHT_CHANNEL_WIDTH_80MHZ;
@@ -4842,7 +4843,7 @@ limEnableHT20Protection(tpAniSirGlobal pMac, tANI_U8 enable,
         return eSIR_SUCCESS; // this protection  is only for HT stations.
 
         //overlapping protection configuration check.
-    if(overlap)
+        if(overlap)
         {
         }
         else
@@ -5052,7 +5053,7 @@ limEnableHTNonGfProtection(tpAniSirGlobal pMac, tANI_U8 enable,
         return eSIR_SUCCESS; // this protection  is only for HT stations.
 
         //overlapping protection configuration check.
-    if(overlap)
+        if(overlap)
         {
         }
         else
@@ -5123,7 +5124,7 @@ limEnableHTLsigTxopProtection(tpAniSirGlobal pMac, tANI_U8 enable,
         return eSIR_SUCCESS; // this protection  is only for HT stations.
 
         //overlapping protection configuration check.
-    if(overlap)
+        if(overlap)
         {
         }
         else
@@ -5197,7 +5198,7 @@ limEnableHtRifsProtection(tpAniSirGlobal pMac, tANI_U8 enable,
 
 
         //overlapping protection configuration check.
-    if(overlap)
+        if(overlap)
         {
         }
         else

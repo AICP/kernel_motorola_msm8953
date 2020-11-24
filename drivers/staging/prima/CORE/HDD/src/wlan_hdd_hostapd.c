@@ -157,6 +157,7 @@ safeChannelType safeChannels[NUM_20MHZ_RF_CHANNELS] =
 };
 #endif /* FEATURE_WLAN_CH_AVOID */
 
+#define MIN_MTU_SIZE 256     // Motorola, IKHSS7-19443, A21623, Hotspot MTU changes
 /*---------------------------------------------------------------------------
  *   Function definitions
  *-------------------------------------------------------------------------*/
@@ -325,6 +326,12 @@ int hdd_hostapd_hard_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 int __hdd_hostapd_change_mtu(struct net_device *dev, int new_mtu)
 {
+//  Motorola, IKHSS7-19443, A21623, Hotspot MTU changes
+    if ( (new_mtu  < MIN_MTU_SIZE)  || (new_mtu > IEEE80211_MAX_DATA_LEN - 26) )
+        return EINVAL;
+
+    dev->mtu = new_mtu;
+//  End IKHSS7-19443
     return 0;
 }
 
@@ -1611,15 +1618,14 @@ VOS_STATUS hdd_hostapd_SAPEventCB( tpSap_Event pSapEvent, v_PVOID_t usrDataForCa
             break;
 
         case eSAP_MAX_ASSOC_EXCEEDED:
-            snprintf(maxAssocExceededEvent, IW_CUSTOM_MAX, "Peer %02x:%02x:%02x:%02x:%02x:%02x denied"
-                    " assoc due to Maximum Mobile Hotspot connections reached. Please disconnect"
-                    " one or more devices to enable the new device connection",
-                    pSapEvent->sapevt.sapMaxAssocExceeded.macaddr.bytes[0],
-                    pSapEvent->sapevt.sapMaxAssocExceeded.macaddr.bytes[1],
-                    pSapEvent->sapevt.sapMaxAssocExceeded.macaddr.bytes[2],
-                    pSapEvent->sapevt.sapMaxAssocExceeded.macaddr.bytes[3],
-                    pSapEvent->sapevt.sapMaxAssocExceeded.macaddr.bytes[4],
-                    pSapEvent->sapevt.sapMaxAssocExceeded.macaddr.bytes[5]);
+            /* Beging Motorola IKHSS7-18970 fpx478, 30/03/2012, nottification to MHS */
+            /* Redefining the Custom Message
+             * IW_CUSTOM_MAX will inform when STA is denied when assoc due to Maximum Mobile
+             * Hotspot connections reached. Please disconnect one or more devices to enable
+             * the new device connection, and we dont require the MAC address of the STA
+             */
+            snprintf(maxAssocExceededEvent, IW_CUSTOM_MAX, "eSAP_MAX_ASSOC_EXCEEDED");
+            /* END IKHSS7-18970 */
             we_event = IWEVCUSTOM; /* Discovered a new node (AP mode). */
             wrqu.data.pointer = maxAssocExceededEvent;
             wrqu.data.length = strlen(maxAssocExceededEvent);
@@ -3262,7 +3268,7 @@ static int __iw_softap_set_trafficmonitor(struct net_device *dev,
                                           union iwreq_data *wrqu, char *extra)
 {
     hdd_adapter_t *pAdapter;
-    int *isSetTrafficMon = (int *)extra;
+    uint8_t *isSetTrafficMon; //IKSWO-89381
     hdd_context_t *pHddCtx;
     int status;
 
@@ -3286,12 +3292,16 @@ static int __iw_softap_set_trafficmonitor(struct net_device *dev,
 
     hddLog(VOS_TRACE_LEVEL_INFO, "%s : ", __func__);
 
-    if (NULL == isSetTrafficMon)
-    {
-        VOS_TRACE(VOS_MODULE_ID_SAP, VOS_TRACE_LEVEL_ERROR,
-                   "%s: Invalid SAP pointer from extra", __func__);
-        return -ENOMEM;
+    //BEGIN MOT IKSWO-89381
+    isSetTrafficMon = (uint8_t *) kmalloc(wrqu->data.length+1, GFP_KERNEL);
+    if(copy_from_user((uint8_t *) isSetTrafficMon, (uint8_t *)(wrqu->data.pointer), wrqu->data.length)) {
+        VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_ERROR,
+                 "%s -- copy_from_user --data pointer failed! bailing",
+                 __func__);
+        kfree(isSetTrafficMon);
+        return -EFAULT;
     }
+    //END MOT IKSWO-89381
 
     if (TRUE == *isSetTrafficMon)
     {
@@ -3300,6 +3310,7 @@ static int __iw_softap_set_trafficmonitor(struct net_device *dev,
         {
             VOS_TRACE( VOS_MODULE_ID_HDD_SOFTAP, VOS_TRACE_LEVEL_ERROR,
                        "%s: failed to Start Traffic Monitor timer ", __func__ );
+            kfree(isSetTrafficMon); //IKSWO-89381
             return -EIO;
         }
     }
@@ -3310,11 +3321,13 @@ static int __iw_softap_set_trafficmonitor(struct net_device *dev,
         {
             VOS_TRACE( VOS_MODULE_ID_HDD_SOFTAP, VOS_TRACE_LEVEL_ERROR,
                        "%s: failed to Stop Traffic Monitor timer ", __func__ );
+            kfree(isSetTrafficMon); //IKSWO-89381
             return -EIO;
         }
 
     }
 
+    kfree(isSetTrafficMon); //IKSWO-89381
     EXIT();
     return 0;
 }
@@ -3890,6 +3903,7 @@ int __iw_softap_get_channel_list(struct net_device *dev,
     tpChannelListInfo channel_list = (tpChannelListInfo) extra;
     eCsrBand curBand = eCSR_BAND_ALL;
     hdd_context_t *pHddCtx;
+    tpAniSirGlobal pMac; //IKSWO-79967
     int ret = 0;
 
     ENTER();
@@ -3919,6 +3933,7 @@ int __iw_softap_get_channel_list(struct net_device *dev,
         hddLog(LOGE,FL("not able get the current frequency band"));
         return -EIO;
     }
+    pMac = PMAC_STRUCT( hHal ); //IKSWO-79967
     wrqu->data.length = sizeof(tChannelListInfo);
     ENTER();
 
@@ -3955,8 +3970,10 @@ int __iw_softap_get_channel_list(struct net_device *dev,
         hddLog(LOGE,FL("Failed to get Domain ID, %d"),domainIdCurrentSoftap);
         return -EIO;
     }
-
-    if(REGDOMAIN_FCC == domainIdCurrentSoftap &&
+    //BEGIN IKSWO-79967, check if current country need disable MHS 5G Band1
+    if( (VOS_TRUE == vos_IsDisableMhsBand1CountryCode(pMac->scan.countryCodeCurrent) ||
+             REGDOMAIN_FCC == domainIdCurrentSoftap) &&
+    //END IKSWO-79967
              pHddCtx->cfg_ini->gEnableStrictRegulatoryForFCC )
     {
         for(i = 0; i < temp_num_channels; i++)
